@@ -4,7 +4,7 @@
  *  Rollers - logue SDK callbacks for the microKORG 2 (polyphonic)
  *
  *  One Rollers instance per voice, all sharing the same parameters. Voice
- *  events fire the per-voice pitch drop; the virtual patch can modulate
+ *  events trigger the per-voice pitch drop; the virtual patch can modulate
  *  Blend, Detune, Drive and Crunch per voice. Buffer layout, mod data access
  *  and voice events follow Korg's microkorg2/waves and vox examples.
  */
@@ -29,11 +29,6 @@ float s_mod[kNumDest][kMk2MaxVoices];
 int32_t s_cached[kNumUnitParams];
 unit_runtime_desc_t s_desc;
 
-// Voice activity from unit_osc_voice_event. Idle voices output silence.
-// Until the first event arrives every voice renders, so nothing goes silent
-// if the host never sends events.
-bool s_active[kMk2MaxVoices];
-bool s_events_seen = false;
 float s_tmp[kMk2BufferSize];
 
 inline const unit_runtime_osc_context_t *context() {
@@ -43,6 +38,14 @@ inline const unit_runtime_osc_context_t *context() {
 inline int voiceCount(const unit_runtime_osc_context_t *ctx) {
   const int n = ctx->voiceLimit;
   return n < 0 ? 0 : (n > kMk2MaxVoices ? kMk2MaxVoices : n);
+}
+
+// NaN/inf check on the bits: the Makefile builds with -ffast-math, which lets
+// the compiler drop float NaN comparisons
+inline bool finiteBits(float x) {
+  union { float f; uint32_t u; } b;
+  b.f = x;
+  return (b.u & 0x7F800000u) != 0x7F800000u;
 }
 
 void writeName(char *dst, const char *name) {
@@ -60,10 +63,8 @@ __attribute__((used)) int8_t unit_init(const unit_runtime_desc_t *desc) {
   if (desc->samplerate != 48000) return k_unit_err_samplerate;
 
   s_desc = *desc;
-  s_events_seen = false;
   for (int v = 0; v < kMk2MaxVoices; ++v) {
     s_voices[v].init(0x9E3779B9u * (uint32_t)(v + 1));  // different drift per voice
-    s_active[v] = false;
     for (int d = 0; d < kNumDest; ++d) s_mod[d][v] = 0.f;
   }
   for (int id = 0; id < kNumUnitParams; ++id) {
@@ -90,22 +91,16 @@ __attribute__((used)) void unit_render(const float *in, float *out, uint32_t fra
   const int n = voiceCount(ctx);
 
   for (int v = 0; v < n; ++v) {
-    // Output lane: with 4 or 8 voices, voice v sits in lane v%4 of its group
-    // of four (Korg's waves/vox); with 1 or 2 voices the lane starts at
-    // ctx->voiceOffset (vox x1/x2 paths).
-    const uint32_t lane = (n >= 4) ? (uint32_t)(v & 3) : (uint32_t)(ctx->voiceOffset + v);
+    // Every voice renders every block (the synth's amp envelope does the
+    // gating), and voice v writes lane v%4 of its group of four, as in Korg's
+    // waves example and VectorFM.
+    const uint32_t lane = (uint32_t)(v & 3);
     const uint32_t offset = GetBufferOffset(ctx, v, frames);
-
-    if (s_events_seen && !s_active[v]) {
-      for (uint32_t i = 0; i < frames; ++i)
-        write_oscillator_output_x1(out, 0.f, offset, ctx->outputStride, i, lane);
-      continue;
-    }
 
     Rollers &voice = s_voices[v];
     // ctx->pitch is a fractional MIDI note number per voice
     float note = ctx->pitch[v];
-    if (!(note >= 0.f && note <= 140.f)) note = 60.f;  // also catches NaN
+    if (!finiteBits(note) || note < 0.f || note > 140.f) note = 60.f;
     const uint8_t nn = static_cast<uint8_t>(note);
     const float frac = note - static_cast<float>(nn);
     voice.setPitch(osc_w0f_for_note(nn, static_cast<uint8_t>(frac * 255.f)));
@@ -154,30 +149,13 @@ __attribute__((used)) const uint8_t *unit_get_param_bmp_value(uint8_t id, int32_
 
 __attribute__((used)) void unit_set_tempo(uint32_t tempo) { (void)tempo; }
 
-// Note events per voice: fire the pitch drop on (re)allocation
+// Note events per voice: fire the pitch drop / hoover dip on each new note.
+// Used only as a trigger; rendering never depends on them.
 __attribute__((used)) void unit_osc_voice_event(uint8_t event, uint8_t voice, uint8_t note, uint8_t velocity) {
   (void)note;
   (void)velocity;
   if (voice >= kMk2MaxVoices) return;
-  s_events_seen = true;
-  switch (event) {
-    case k_voice_event_allocation:
-      if (!s_active[voice]) s_voices[voice].reset();  // fresh voice: clean filter state
-      s_active[voice] = true;
-      s_voices[voice].noteOn();
-      break;
-    case k_voice_event_steal:
-      s_active[voice] = true;
-      s_voices[voice].noteOn();
-      break;
-    case k_voice_event_release:
-      break;  // keep rendering through the amp release
-    case k_voice_event_deallocation:
-      s_active[voice] = false;
-      break;
-    default:
-      break;
-  }
+  if (event == k_voice_event_allocation || event == k_voice_event_steal) s_voices[voice].noteOn();
 }
 
 // Virtual patch: modulation data and destination names

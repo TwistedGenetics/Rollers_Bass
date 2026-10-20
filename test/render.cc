@@ -255,6 +255,23 @@ int main() {
     result(d <= ref * 1.5f, "legato retrigger max step %.4f (steady %.4f)", d, ref);
   }
 
+  // 6c. Switching MODE / VOICES mid-note fades instead of jumping
+  {
+    float ref = 0;
+    for (int m = 0; m < Rollers::kNumModes; ++m) {
+      r.init(); setAll(r, 512, 450, 0, 0, 0, 3, 0, 25, 0, m);
+      ref = std::fmax(ref, maxStep(render(r, 33, 0.3f)));
+    }
+    r.init(); setAll(r, 512, 450, 0, 0, 0, 3, 0, 25, 0, Rollers::kModeSub);
+    auto x = render(r, 33, 2.f, [&](float p) {
+      const int step = int(p * 8);
+      r.setParam(Rollers::kMode, step % Rollers::kNumModes);
+      r.setParam(Rollers::kVoices, 2 + step % 3);
+    });
+    const float d = maxStep(x);
+    result(d <= ref * 1.15f, "mode/voices switching max step %.4f (static %.4f)", d, ref);
+  }
+
   // 7. Aliasing: Reese saws at high notes (no drive/crunch), triangle sub
   for (float note : {84.f, 96.f}) {
     r.init();

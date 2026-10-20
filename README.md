@@ -31,7 +31,7 @@ The parameters are the same on both synths, in the same order.
 |---|---|---|---|---|
 | Knob A | OSC page 1 | BLEND | 0–1023 | **Sub ↔ upper balance.** Both are at full level around the middle (512). In SUB mode it adds "body" (a clean 2nd harmonic); in REESE mode it's a tone control (dark → open) |
 | Knob B | OSC page 1 | DETUNE | 0–1023 | Reese detune, from slow phasing (0.5 cent) to full wobble (±45 cents); also sets how far DRIFT wanders |
-| Edit 1 | OSC page 1 | SUB SHAPE | SINE, TRI, FOLD | Sub waveform. FOLD is a lightly folded sine with extra odd harmonics, so the sub still reads on laptop speakers and phones |
+| Edit 1 | OSC page 1 | SUB SHAPE | SINE, TRI, FOLD | Sub waveform. FOLD is a lightly folded sine (adds a 3rd harmonic), so the sub still reads on laptop speakers and phones |
 | Edit 2 | OSC page 2 | PITCH DROP | 0–100 % | How far above the note each note starts, falling back to the note (0 to 2 octaves). Affects the whole oscillator |
 | Edit 3 | OSC page 2 | DROP TIME | 0–100 % | How fast it falls: 5 ms (punchy click/thud) to ~0.8 s (long 808 glide) |
 | Edit 4 | OSC page 2 | VOICES | 2–4 | Number of detuned saws in the Reese / Hoover stack. Level is compensated |
@@ -49,7 +49,9 @@ The parameters are the same on both synths, in the same order.
 - **SUB**: just the sub. Knob A adds body (2nd harmonic).
 - **REESE**: just the detuned saw stack, full range (no sub, no split). Knob A is a low-pass tone control. Classic Reese on its own, for layering with something else.
 - **SUB+RS** (default): clean sub plus the high-passed Reese on top. Knob A balances them. The main jungle/DnB bass.
-- **HOOVER**: a stack of PWM-modulated saws plus an octave-down saw, with a short pitch dip on attack (starts a fifth low and swoops up over ~70 ms), the "Mentasm" family of sounds. Sub underneath as in SUB+RS.
+- **HOOVER**: a detuned stack of PWM-modulated saws with a short pitch dip on attack (starts a fifth low and swoops up over ~70 ms), the "Mentasm" family of sounds. Sub underneath as in SUB+RS.
+
+Changing MODE or VOICES while a note is playing does a quick (one block) fade-out/fade-in instead of a hard switch, so it doesn't click.
 
 ## Starter settings
 
@@ -78,6 +80,7 @@ Start from the defaults (SUB+RS, Blend 560, Detune 410, 3 voices, Drop 20 %, Dri
 - [ ] **Voices**: 2/3/4 sound progressively thicker at about the same level.
 - [ ] **Crunch**: 0 clean; small amounts add grit; 100 % = very lo-fi, aliasing top end.
 - [ ] **Hoover**: swoops up into each note; the stack shimmers (PWM).
+- [ ] **Switching**: change MODE and VOICES while holding a note: a brief dip, no click.
 - [ ] **High notes**: top octave with DRIVE and CRUNCH at 0 sounds clean, no whistling aliases.
 - [ ] **NTS-1 shape LFO**: route to shape → BLEND wobbles between sub and Reese.
 - [ ] **microKORG 2 virtual patch**: route an LFO or envelope to Blend / Detune / Drive / Crunch and hear each move.
@@ -88,7 +91,7 @@ Start from the defaults (SUB+RS, Blend 560, Detune 410, 3 voices, Drop 20 %, Dri
 
 Rollers uses no tables and allocates no memory. Expensive maths (detune, drift, drive/crunch settings, PWM widths, filter coefficients) runs once per block. The per-sample work is a handful of PolyBLEP saws and polynomial sines, plus one exp2 while a pitch drop is still falling.
 
-- **Desktop** (test harness, worst case: HOOVER, 4 voices, drop + drive + crunch): ~60 ns per sample, about 0.3 % of real time on the build machine.
+- **Desktop** (test harness, worst case: HOOVER, 4 voices, drop + drive + crunch): ~50 ns per sample, about 0.25 % of real time on the build machine.
 - **NTS-1 mkII** (Cortex-M7): this is an estimate, not a measurement. At a few hundred cycles per sample, it should sit well under 10 % of the CPU.
 - **microKORG 2** (Cortex-A7, up to 8 voices): one Rollers runs per voice, so the 8-voice HOOVER case is the one to check on the hardware (see the checklist). If it struggles, use fewer VOICES or a lighter mode for big chords.
 

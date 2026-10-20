@@ -178,8 +178,9 @@ class Rollers {
     p_[kCrunch] = 0.f;
     p_[kSubShape] = p_[kVoices] = p_[kMode] = 0.f;  // unused (ints below)
     shape_ = kSine;
-    voices_ = 3;
-    mode_ = kModeSubReese;
+    voices_ = want_voices_ = 3;
+    mode_ = want_mode_ = kModeSubReese;
+    fade_in_ = false;
     w0_ = 55.f * rmath::kInvSR;
     lfo_ = 0.f;
     mod_blend_ = mod_detune_ = mod_drive_ = mod_crunch_ = 0.f;
@@ -194,7 +195,6 @@ class Rollers {
       drift_b_[i] = rand11();
       ratio_z_[i] = 1.f;
     }
-    oct_ph_ = 0.f;
     reset();
   }
 
@@ -243,11 +243,13 @@ class Rollers {
       case kSubShape:
         shape_ = rmath::clampi(value, 0, kNumShapes - 1);
         break;
+      // MODE and VOICES switch whole signal paths on and off, so the change
+      // is deferred: process() fades out, switches, then fades back in.
       case kVoices:
-        voices_ = rmath::clampi(value, kMinVoices, kMaxVoices);
+        want_voices_ = rmath::clampi(value, kMinVoices, kMaxVoices);
         break;
       case kMode:
-        mode_ = rmath::clampi(value, 0, kNumModes - 1);
+        want_mode_ = rmath::clampi(value, 0, kNumModes - 1);
         break;
       default:
         if (id > kSubShape && id < kNumParams) p_[id] = value * 0.01f;
@@ -260,6 +262,20 @@ class Rollers {
     using namespace rmath;
     if (frames == 0) return;
     const float inv_frames = 1.f / (float)frames;
+    if (first_block_) {
+      mode_ = want_mode_;
+      voices_ = want_voices_;
+    }
+    // Pending MODE / VOICES change: fade this block out, switch afterwards
+    const bool switching = want_mode_ != mode_ || want_voices_ != voices_;
+    float fade = 1.f, d_fade = 0.f;
+    if (switching) {
+      d_fade = -inv_frames;
+    } else if (fade_in_) {
+      fade = 0.f;
+      d_fade = inv_frames;
+      fade_in_ = false;
+    }
     const int mode = mode_;
     const int nv = voices_;
     const bool has_sub = mode != kModeReese;
@@ -331,7 +347,9 @@ class Rollers {
     float hp_a1 = 0.f, hp_a2 = 0.f, hp_a3 = 0.f;
     const float hp_k = 1.4142135f;
     if (split) {
-      const float fc = clampf(w0 * 1.4f, 20.f * kInvSR, 1000.f * kInvSR);
+      // follow the pitch drop too, so the sub keeps the fundamental mid-glide
+      const float wd = drop_env_ > 1e-4f ? w0 * pow2(drop_oct * drop_env_) : w0;
+      const float fc = clampf(wd * 1.4f, 20.f * kInvSR, 1000.f * kInvSR);
       const float x = 3.1415927f * fc;
       const float g = x * (1.f + x * x * (0.33333334f + x * x * 0.13333334f));  // tan(x)
       hp_a1 = 1.f / (1.f + g * (g + hp_k));
@@ -362,7 +380,7 @@ class Rollers {
     const float d_crn = (crunch_t - crn) * inv_frames;
     const float d_tone = (tone_t - tone) * inv_frames;
 
-    float sub_ph = sub_ph_, oct_ph = oct_ph_;
+    float sub_ph = sub_ph_;
     float old_ph = old_ph_, xfade = xfade_;
     float drop_env = drop_env_, hoov_env = hoov_env_;
     float ic1 = hp_ic1_, ic2 = hp_ic2_;
@@ -443,13 +461,6 @@ class Rollers {
           if (tn >= 1.f) tn -= 1.f;
           ph[v] = tn;
         }
-        if (hoover) {
-          // octave-down saw underneath the stack (the classic hoover weight)
-          const float dto = clampf(wu * 0.5f, 1e-6f, 0.45f);
-          up += 0.7f * saw(oct_ph, dto);
-          oct_ph += dto;
-          if (oct_ph >= 1.f) oct_ph -= 1.f;
-        }
         up *= upper_norm;
 
         if (split) {
@@ -511,12 +522,12 @@ class Rollers {
         const float ug = clampf(2.f * blend, 0.f, 1.f);
         y = (0.8f * sub * sg + up * ug) * 0.6f;  // headroom: keep the sum out of the limiter
       }
-      out[i * stride] = limit(y) * gain;
+      fade += d_fade;
+      out[i * stride] = limit(y) * fade * gain;
     }
 
     // ---- store state ----
     sub_ph_ = sub_ph;
-    oct_ph_ = oct_ph;
     old_ph_ = old_ph;
     xfade_ = xfade > 0.f ? xfade : 0.f;
     drop_env_ = drop_env;
@@ -530,6 +541,13 @@ class Rollers {
     hold_val_ = hval;
     copy4(ph_, ph);
     copy4(ratio_z_, ratio_t);
+    if (switching) {
+      mode_ = want_mode_;
+      voices_ = want_voices_;
+      hp_ic1_ = hp_ic2_ = dc_x1_ = dc_y1_ = 0.f;
+      lp_z_ = 0.f;
+      fade_in_ = true;
+    }
     blend_z_ = blend_t;
     drive_z_ = drive_t;
     crunch_z_ = crunch_t;
@@ -544,7 +562,7 @@ class Rollers {
         return tri(ph, w);
       case kFolded:
         // light sine fold: adds odd harmonics so the sub reads on small speakers
-        return sin2pi(0.25f * 1.9f * sin2pi(ph));
+        return sin2pi(0.25f * 1.25f * sin2pi(ph));
       default:
         return sin2pi(ph);
     }
@@ -574,13 +592,14 @@ class Rollers {
   inline float rand11() { return rand01() * 2.f - 1.f; }
 
   float p_[kNumParams];
-  int shape_, voices_, mode_;
+  int shape_, voices_, mode_, want_voices_, want_mode_;
+  bool fade_in_;
   float w0_, lfo_;
   float mod_blend_, mod_detune_, mod_drive_, mod_crunch_;
   bool first_block_;
   uint32_t rng_;
 
-  float sub_ph_, oct_ph_;
+  float sub_ph_;
   float old_ph_, xfade_;
   float ph_[kMaxVoices], pw_ph_[kMaxVoices];
   float drift_t_[kMaxVoices], drift_a_[kMaxVoices], drift_b_[kMaxVoices];
