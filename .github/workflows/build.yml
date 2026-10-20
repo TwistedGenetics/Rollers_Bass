@@ -1,0 +1,79 @@
+name: Build Rollers
+
+# Every push / PR builds both units and runs the DSP tests (download them from
+# the run's artifacts). A GitHub Release is only made when you push a version
+# tag, e.g.:  git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchains and logue SDK
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('build.sh') }}
+
+      # NTS-1 mkII: Arm GCC 10.3-2021.10. microKORG 2: Korg's gnueabihf toolchain.
+      # Strict mode: fail rather than fall back to a different compiler.
+      - name: Build units (Korg's toolchains)
+        run: ./build.sh all
+        env:
+          ROLLERS_STRICT: "1"
+
+      - name: Check both units have the same version
+        run: |
+          a=$(grep -oE '\.version = 0x[0-9A-Fa-f]+' nts1mkii/header.c)
+          b=$(grep -oE '\.version = 0x[0-9A-Fa-f]+' microkorg2/header.c)
+          echo "NTS-1 mkII: $a / microKORG 2: $b"
+          [ "$a" = "$b" ]
+
+      - name: Check the tag matches the unit version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          hex=$(grep -oE '\.version = 0x[0-9A-Fa-f]+' nts1mkii/header.c | grep -oE '0x[0-9A-Fa-f]+')
+          v=$(( hex ))
+          want="v$(( (v >> 16) & 0xFF )).$(( (v >> 8) & 0xFF )).$(( v & 0xFF ))"
+          echo "tag ${GITHUB_REF_NAME}, header.c says $want"
+          [ "$GITHUB_REF_NAME" = "$want" ]
+
+      - name: Run DSP tests
+        run: ./test/run.sh
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rollers-units
+          path: |
+            dist/*.nts1mkiiunit
+            dist/*.mk2unit
+            test/out/*.wav
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Rollers ${{ github.ref_name }}
+          make_latest: true
+          files: |
+            dist/Rollers.nts1mkiiunit
+            dist/Rollers.mk2unit
+          body: |
+            Rollers — jungle / drum & bass bass oscillator (clean sub + Reese / Hoover, pitch drop, drive, sampler crunch) for the Korg NTS-1 digital kit mkII and microKORG 2.
+
+            **NTS-1 mkII** — download `Rollers.nts1mkiiunit`, open KORG KONTROL Editor with the NTS-1 mkII connected, drag the file onto the **oscillator** list and press **SEND**.
+
+            **microKORG 2** (firmware 2.0.0 or later) — download `Rollers.mk2unit` and load it as a user oscillator (see the README for the steps).
+
+            Controls and starter settings: see the [README](https://github.com/${{ github.repository }}#readme).
