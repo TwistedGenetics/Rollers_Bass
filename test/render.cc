@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "rollers.h"
+#include "rollers_lean4.h"
 
 static const int kSR = 48000;
 static const int kBlock = 64;
@@ -158,6 +159,255 @@ static const Preset kPresets[] = {
     {"crunchy_94",    600, 400, Rollers::kFolded,   10, 20, 3, 30, 45, 55, Rollers::kModeSubReese},
     {"808_glide",     150, 300, Rollers::kTriangle, 70, 70, 2, 20, 20,  0, Rollers::kModeSubReese},
 };
+
+// ---------------- microKORG 2 lean renderer ----------------
+
+static void setAllG(RollersGroup4 &g, int blend, int detune, int shape, int drop, int dropt, int voices, int drift,
+                    int drive, int crunch, int mode) {
+  g.setParam(Rollers::kBlend, blend);
+  g.setParam(Rollers::kDetune, detune);
+  g.setParam(Rollers::kSubShape, shape);
+  g.setParam(Rollers::kDrop, drop);
+  g.setParam(Rollers::kDropTime, dropt);
+  g.setParam(Rollers::kVoices, voices);
+  g.setParam(Rollers::kDrift, drift);
+  g.setParam(Rollers::kDrive, drive);
+  g.setParam(Rollers::kCrunch, crunch);
+  g.setParam(Rollers::kMode, mode);
+}
+
+// Four lanes at notes n0..n3 (all live), returns lane `lane`. automate(t) per buffer.
+template <typename F>
+static std::vector<float> renderG(RollersGroup4 &g, const float notes[4], float seconds, int lane, F automate, int block = 64) {
+  std::vector<float> out(size_t(seconds * kSR));
+  const bool live[4] = {true, true, true, true};
+  for (int j = 0; j < 4; ++j) { g.setPitch(j, noteW0(notes[j])); g.noteOn(j, true); }
+  r4f buf[64];
+  for (size_t i = 0; i < out.size(); i += block) {
+    automate(float(i) / out.size());
+    const uint32_t n = (uint32_t)std::min<size_t>(block, out.size() - i);
+    g.render(live, buf, n);
+    for (uint32_t s = 0; s < n; ++s) out[i + s] = buf[s][lane];
+  }
+  return out;
+}
+static std::vector<float> renderG(RollersGroup4 &g, float note, float seconds) {
+  const float notes[4] = {note, note + 7, note + 12, note - 5};
+  return renderG(g, notes, seconds, 0, [](float) {});
+}
+
+static void testLean() {
+  printf("\n-- microKORG 2 lean renderer --\n");
+  RollersGroup4 g;
+
+  // stress: every mode x shape x voices, all max, wide note range, all 4 lanes
+  for (int m = 0; m < Rollers::kNumModes; ++m)
+    for (int sh = 0; sh < Rollers::kNumShapes; ++sh)
+      for (int nv = 2; nv <= 4; ++nv)
+        for (float note : {12.f, 36.f, 60.f, 96.f, 120.f}) {
+          for (int lane = 0; lane < 4; ++lane) {
+            g.init(0xABCDu);
+            setAllG(g, 1023, 1023, sh, 100, 100, nv, 100, 100, 100, m);
+            const float notes[4] = {note, note + 5, note - 7, note + 0.5f};
+            auto x = renderG(g, notes, 0.3f, lane, [](float) {}, 64);
+            Stats s = stats(x);
+            if (s.bad || s.peak > 1.f || std::fabs(s.dc) > 0.05f || s.peak < 0.01f) {
+              char n[96]; snprintf(n, sizeof n, "lean stress %s %s v%d note %d lane %d", Rollers::modeName(m), Rollers::shapeName(sh), nv, int(note), lane);
+              check(n, x);
+            }
+          }
+        }
+  result(true, "lean stress: modes x shapes x voices x notes x lanes");
+
+  for (int bs : {1, 7, 64}) {
+    g.init(1);
+    setAllG(g, 600, 500, 2, 50, 30, 4, 60, 50, 40, Rollers::kModeHoover);
+    const float notes[4] = {40, 47, 52, 35};
+    auto x = renderG(g, notes, 0.5f, 1, [](float) {}, bs);
+    char n[64]; snprintf(n, sizeof n, "lean block size %d", bs);
+    check(n, x);
+  }
+
+  // tuning
+  for (float note : {33.f, 69.f}) {
+    g.init(1);
+    setAllG(g, 0, 0, Rollers::kSine, 0, 0, 2, 0, 0, 0, Rollers::kModeSub);
+    auto x = renderG(g, note, 2.f);
+    const int hz = zeroCrossHz(x, 0), want = int(std::lround(noteHz(note)));
+    result(std::abs(hz - want) <= 1, "lean tuning note %d: %d Hz (want %d)", int(note), hz, want);
+  }
+  // drop settles and starts high
+  {
+    g.init(1);
+    setAllG(g, 0, 0, Rollers::kSine, 100, 40, 2, 0, 0, 0, Rollers::kModeSub);
+    auto x = renderG(g, 45, 3.f);
+    const int hz = zeroCrossHz(x, size_t(1.5 * kSR));
+    result(std::abs(hz - 110) <= 1, "lean drop settles: %d Hz (want 110)", hz);
+    std::vector<float> head(x.begin(), x.begin() + 480);
+    result(zeroCrossHz(head, 0) > 250, "lean drop starts high: ~%d Hz", zeroCrossHz(head, 0));
+  }
+  // aliasing: DPW saws (less rejection than polyBLEP, fine for bass)
+  for (float note : {60.f, 72.f, 84.f}) {
+    g.init(1);
+    setAllG(g, 1023, 0, 0, 0, 0, 2, 0, 0, 0, Rollers::kModeReese);
+    auto x = renderG(g, note, 0.5f);
+    const float ir = inharmonicRatio(x, noteHz(note));
+    result(ir < (note < 80 ? 0.01f : 0.03f), "lean alias reese saw note %d: inharmonic %.5f", int(note), ir);
+  }
+  // sub stays clean
+  {
+    auto fund = [&](int drive, int crunch) {
+      g.init(1);
+      setAllG(g, 512, 450, Rollers::kSine, 0, 0, 3, 0, drive, crunch, Rollers::kModeSubReese);
+      auto x = renderG(g, 33, 1.f);
+      return toneMag(x, kSR / 2, 16384, noteHz(33));
+    };
+    const double clean = fund(0, 0), dirty = fund(100, 100);
+    const double db = 20 * std::log10(dirty / clean);
+    result(std::fabs(db) < 1.5, "lean sub fundamental %+.2f dB with drive+crunch at max", db);
+  }
+  // zipper sweeps
+  {
+    struct Sweep { const char *name; int id, lo, hi, mode; };
+    const Sweep sweeps[] = {
+        {"blend", Rollers::kBlend, 0, 1023, Rollers::kModeSubReese},
+        {"tone (reese)", Rollers::kBlend, 0, 1023, Rollers::kModeReese},
+        {"drive", Rollers::kDrive, 0, 100, Rollers::kModeSubReese},
+        {"detune", Rollers::kDetune, 0, 1023, Rollers::kModeSubReese},
+        {"crunch", Rollers::kCrunch, 0, 100, Rollers::kModeSubReese},
+    };
+    for (const Sweep &s : sweeps) {
+      float ref = 0;
+      for (int v : {s.lo, s.hi}) {
+        g.init(1); setAllG(g, 512, 450, 0, 0, 0, 3, 0, 25, 0, s.mode); g.setParam(s.id, v);
+        ref = std::fmax(ref, maxStep(renderG(g, 33, 0.5f)));
+      }
+      g.init(1); setAllG(g, 512, 450, 0, 0, 0, 3, 0, 25, 0, s.mode);
+      const float notes[4] = {33, 40, 45, 28};
+      auto x = renderG(g, notes, 1.f, 0, [&](float p) { g.setParam(s.id, int(s.lo + (s.hi - s.lo) * p)); });
+      const float d = maxStep(x);
+      result(d <= ref * 1.2f, "lean zipper %-14s max step %.4f (static %.4f)", s.name, d, ref);
+    }
+  }
+  // mode / voices switching
+  {
+    float ref = 0;
+    for (int m = 0; m < Rollers::kNumModes; ++m) {
+      g.init(1); setAllG(g, 512, 450, 0, 0, 0, 3, 0, 25, 0, m);
+      ref = std::fmax(ref, maxStep(renderG(g, 33, 0.3f)));
+    }
+    g.init(1); setAllG(g, 512, 450, 0, 0, 0, 3, 0, 25, 0, Rollers::kModeSub);
+    const float notes[4] = {33, 40, 45, 28};
+    auto x = renderG(g, notes, 2.f, 0, [&](float p) {
+      const int step = int(p * 8);
+      g.setParam(Rollers::kMode, step % Rollers::kNumModes);
+      g.setParam(Rollers::kVoices, 2 + step % 3);
+    });
+    const float d = maxStep(x);
+    result(d <= ref * 1.15f, "lean mode/voices switching max step %.4f (static %.4f)", d, ref);
+  }
+  // retrigger: steal (keeps phase) and fresh allocation on a silent lane must not click
+  {
+    g.init(1);
+    setAllG(g, 512, 450, Rollers::kSine, 30, 30, 3, 30, 30, 0, Rollers::kModeSubReese);
+    const bool live[4] = {true, true, true, true};
+    for (int j = 0; j < 4; ++j) { g.setPitch(j, noteW0(33)); g.noteOn(j, true); }
+    std::vector<float> x(48000);
+    r4f buf[64];
+    for (size_t i = 0; i < x.size(); i += 64) {
+      if (i == 64 * 300) { g.setPitch(0, noteW0(36)); g.noteOn(0, false); }  // steal / legato
+      g.render(live, buf, 64);
+      for (int s = 0; s < 64; ++s) x[i + s] = buf[s][0];
+    }
+    float ref = 0;
+    for (size_t i = 64 * 150; i < 64 * 299; ++i) ref = std::fmax(ref, std::fabs(x[i] - x[i - 1]));
+    float d = 0;
+    for (size_t i = 64 * 300; i < 64 * 304; ++i) d = std::fmax(d, std::fabs(x[i] - x[i - 1]));
+    result(d <= ref * 1.6f, "lean steal retrigger step %.4f (steady %.4f)", d, ref);
+  }
+  // silent lanes output exactly zero and don't disturb live lanes
+  {
+    g.init(1);
+    setAllG(g, 512, 450, 0, 0, 0, 3, 30, 25, 0, Rollers::kModeHoover);
+    const bool live[4] = {true, false, true, false};
+    for (int j = 0; j < 4; ++j) { g.setPitch(j, noteW0(33 + j)); g.noteOn(j, true); }
+    r4f buf[64];
+    float silent = 0, loud = 0;
+    bool bad = false;
+    for (int b = 0; b < 400; ++b) {
+      g.render(live, buf, 64);
+      for (int s = 0; s < 64; ++s) {
+        silent = std::fmax(silent, std::fabs(buf[s][1]) + std::fabs(buf[s][3]));
+        loud = std::fmax(loud, std::fabs(buf[s][0]));
+        for (int j = 0; j < 4; ++j) bad |= !std::isfinite(buf[s][j]);
+      }
+    }
+    result(silent == 0.f && loud > 0.1f && !bad, "lean idle lanes silent (%.3g), live lanes play (%.3f)", silent, loud);
+  }
+  // level close to the NTS-1 engine for each starter setting
+  for (const Preset &p : kPresets) {
+    Rollers r; r.init(7);
+    setAll(r, p.blend, p.detune, p.shape, p.drop, p.dropt, p.voices, p.drift, p.drive, p.crunch, p.mode);
+    const float a = stats(render(r, 36, 1.f), kSR / 4).rms;
+    g.init(7);
+    setAllG(g, p.blend, p.detune, p.shape, p.drop, p.dropt, p.voices, p.drift, p.drive, p.crunch, p.mode);
+    const float b = stats(renderG(g, 36, 1.f), kSR / 4).rms;
+    const float db = 20 * std::log10(b / a);
+    result(std::fabs(db) < 2.f, "lean vs NTS-1 level %-14s %+.2f dB", p.name, db);
+  }
+  // demo riffs from the lean renderer
+  {
+    const float riff[] = {33, 33, 36, 31, 33, 33, 38, 36};
+    for (const Preset &p : kPresets) {
+      g.init(0xC0FFEEu);
+      setAllG(g, p.blend, p.detune, p.shape, p.drop, p.dropt, p.voices, p.drift, p.drive, p.crunch, p.mode);
+      std::vector<float> x;
+      const int step = int(kSR * 60.0 / 170.0 / 2.0);
+      const bool live[4] = {true, false, false, false};
+      r4f buf[64];
+      for (float n : riff) {
+        g.setPitch(0, noteW0(n));
+        g.noteOn(0, false);
+        for (int i = 0; i < step * 2; i += 64) {
+          g.render(live, buf, 64);
+          for (int s = 0; s < 64; ++s) x.push_back(buf[s][0]);
+        }
+      }
+      char n[64]; snprintf(n, sizeof n, "lean preset %s", p.name);
+      check(n, x);
+      writeWav(std::string("test/out/mk2_preset_") + p.name + ".wav", x);
+    }
+  }
+  // cost: 8 voices (2 groups) worst case vs 8 scalar engines
+  {
+    const int blocks = 48000 * 10 / 64;
+    std::vector<float> buf(64);
+    Rollers rs[8];
+    for (int v = 0; v < 8; ++v) {
+      rs[v].init(v + 1);
+      setAll(rs[v], 600, 600, Rollers::kFolded, 50, 50, 4, 80, 80, 80, Rollers::kModeHoover);
+      rs[v].setPitch(noteW0(36 + v)); rs[v].noteOn();
+    }
+    auto t0 = std::chrono::steady_clock::now();
+    float acc = 0;
+    for (int b = 0; b < blocks; ++b) for (int v = 0; v < 8; ++v) { rs[v].process(buf.data(), 64); acc += buf[0]; }
+    auto t1 = std::chrono::steady_clock::now();
+    RollersGroup4 gg[2];
+    const bool live[4] = {true, true, true, true};
+    for (int k = 0; k < 2; ++k) {
+      gg[k].init(k + 1);
+      setAllG(gg[k], 600, 600, Rollers::kFolded, 50, 50, 4, 80, 80, 80, Rollers::kModeHoover);
+      for (int j = 0; j < 4; ++j) { gg[k].setPitch(j, noteW0(36 + j)); gg[k].noteOn(j, true); }
+    }
+    r4f ob[64];
+    auto t2 = std::chrono::steady_clock::now();
+    for (int b = 0; b < blocks; ++b) for (int k = 0; k < 2; ++k) { gg[k].render(live, ob, 64); acc += ob[0][0]; }
+    auto t3 = std::chrono::steady_clock::now();
+    const double sc = std::chrono::duration<double>(t1 - t0).count(), ln = std::chrono::duration<double>(t3 - t2).count();
+    printf("8 voices worst case: scalar %.1f ns/sample, lean %.1f ns/sample (%.1fx faster)%s\n",
+           sc * 1e9 / (blocks * 64.0), ln * 1e9 / (blocks * 64.0), sc / ln, acc > 1e9 ? "" : "");
+  }
+}
 
 int main() {
   Rollers r;
@@ -390,6 +640,8 @@ int main() {
     printf("worst case (HOOVER, 4 voices, drop+drive+crunch): %.1f ns/sample on this machine (%.2f%% of real time)%s\n",
            ns, ns / (1e9 / kSR) * 100.0, acc > 1e9 ? "" : "");
   }
+
+  testLean();
 
   printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
   return failures ? 1 : 0;

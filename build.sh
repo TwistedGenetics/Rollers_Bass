@@ -139,6 +139,17 @@ build_mk2() {
     PLATFORM_COMMON_PATH="$SDK_DIR/platform/common" \
     INSTALLDIR="$ROOT/dist"
   echo "==> Done: dist/Rollers.mk2unit"
+
+  # Load-meter build (same DSP, CPU load shown in the MODE display)
+  echo "==> Building RLmeter (Rollers + CPU load meter) for microKORG 2"
+  make -s -C "$ROOT/tools/mk2-meter" clean >/dev/null
+  make -C "$ROOT/tools/mk2-meter" install \
+    CROSS_COMPILE="${GCC%gcc}" \
+    COMMON_INC_PATH="$PLAT/common" \
+    COMMON_SRC_PATH="$PLAT/common" \
+    PLATFORM_COMMON_PATH="$SDK_DIR/platform/common" \
+    INSTALLDIR="$ROOT/dist"
+  echo "==> Done: dist/RLmeter.mk2unit"
 }
 
 case "$TARGET" in

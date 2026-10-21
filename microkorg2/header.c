@@ -9,14 +9,23 @@
 #include "unit.h"
 #include "runtime.h"
 
+// The load-meter build (tools/mk2-meter) reuses this header with its own
+// name and unit ID, so both can be loaded side by side.
+#ifndef ROLLERS_UNIT_NAME
+#define ROLLERS_UNIT_NAME "Rollers"
+#endif
+#ifndef ROLLERS_UNIT_ID
+#define ROLLERS_UNIT_ID 0x3U  // 1 = VectorFM, 2 = Formant Mutator, 3 = Rollers
+#endif
+
 const __unit_header unit_header_t unit_header = {
     .header_size = sizeof(unit_header_t),
     .target = UNIT_TARGET_PLATFORM | k_unit_module_osc,
     .api = UNIT_API_VERSION,
     .dev_id = 0x5477476EU,  // 'TwGn' (TwistedGenetics) - same as the NTS-1 mkII build
-    .unit_id = 0x3U,        // 1 = VectorFM, 2 = Formant Mutator, 3 = Rollers
-    .version = 0x00010000U,  // 1.0.0
-    .name = "Rollers",
+    .unit_id = ROLLERS_UNIT_ID,
+    .version = 0x00010100U,  // 1.1.0
+    .name = ROLLERS_UNIT_NAME,
     .num_presets = 0,
     .num_params = 13,
     .params = {

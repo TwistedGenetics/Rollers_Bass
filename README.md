@@ -21,7 +21,11 @@ Needs microKORG 2 firmware **2.0.0 or later** (the version that added logue SDK 
 - **KORG Sound Librarian** (Korg's official app for v2.0): connect the microKORG 2 by USB, add `Rollers.mk2unit` as a user oscillator and send it to the synth.
 - **Or USB mass storage:** hold the first option button while powering on, then copy the file into `Units/Oscs/` (into a `SlotN` folder) on the drive that appears.
 
-Rollers then appears at the end of the oscillator list. The microKORG 2 version is polyphonic: every voice runs its own Rollers, with its own pitch drop and its own Reese drift.
+Rollers then appears at the end of the oscillator list. The microKORG 2 version is polyphonic: every voice has its own pitch drop and its own Reese drift.
+
+The microKORG 2 runs a **lean version of the engine** (`core/rollers_lean4.h`, since v1.1.0), because the full engine run once per voice was too heavy for the synth and crackled. It renders four voices at a time with NEON, works out the slow-moving maths once per audio buffer instead of every sample, and uses cheaper saws (DPW, as in Korg's own `vox`). Silent voices cost nothing. The controls and sound are the same; levels match the NTS-1 version within about 1.5 dB.
+
+**`RLmeter.mk2unit`** (optional, also in each Release) is the same oscillator with its CPU load shown next to MODE, e.g. `S+RS 37%` (peak over the last half second; 100 % = out of time, crackles). Load it alongside Rollers if you hear crackles and want to know how close to the limit a patch is.
 
 ## Controls
 
@@ -84,7 +88,7 @@ Start from the defaults (SUB+RS, Blend 560, Detune 410, 3 voices, Drop 20 %, Dri
 - [ ] **High notes**: top octave with DRIVE and CRUNCH at 0 sounds clean, no whistling aliases.
 - [ ] **NTS-1 shape LFO**: route to shape → BLEND wobbles between sub and Reese.
 - [ ] **microKORG 2 virtual patch**: route an LFO or envelope to Blend / Detune / Drive / Crunch and hear each move.
-- [ ] **microKORG 2 chords / full polyphony**: HOOVER, 4 voices, DRIVE and CRUNCH up, hold 8 notes: no dropouts or crackles (this is the heaviest case for the CPU).
+- [ ] **microKORG 2 chords / full polyphony**: HOOVER, 4 voices, DRIVE and CRUNCH up, hold 8 notes: no dropouts or crackles (this is the heaviest case for the CPU). With RLmeter loaded, note the % shown next to MODE.
 - [ ] **Everything at max**: loud and nasty, but no dropouts, crackles, or the unit stopping.
 
 ## CPU
@@ -93,7 +97,7 @@ Rollers uses no tables and allocates no memory. Expensive maths (detune, drift, 
 
 - **Desktop** (test harness, worst case: HOOVER, 4 voices, drop + drive + crunch): ~50 ns per sample, about 0.25 % of real time on the build machine.
 - **NTS-1 mkII** (Cortex-M7): this is an estimate, not a measurement. At a few hundred cycles per sample, it should sit well under 10 % of the CPU.
-- **microKORG 2** (Cortex-A7, up to 8 voices): one Rollers runs per voice, so the 8-voice HOOVER case is the one to check on the hardware (see the checklist). If it struggles, use fewer VOICES or a lighter mode for big chords.
+- **microKORG 2** (Cortex-A7, up to 8 voices): the lean renderer measures about 275 instructions per sample for a group of four voices in the typical case (SUB+RS, 3 saws, drive on) and about 450 in the worst case (HOOVER, 4 saws, drive and crunch at max). That's desktop SSE2 counts; NEON needs fewer. Groups with no sounding voice are skipped. Korg doesn't publish the per-oscillator budget, so check with RLmeter. If a big chord still crackles, use fewer VOICES, a lighter mode, or fewer voices in the patch.
 
 The NTS-1 unit is ~8.5 KB (limit 48 KB) and links no library code beyond what Korg's examples use.
 
@@ -122,9 +126,10 @@ Desktop DSP tests check NaN/clipping/DC across every mode, shape, voice count an
 ## Layout
 
 ```
-core/         rollers.h (DSP, shared by both units, no SDK dependencies)
+core/         rollers.h (full DSP: NTS-1 mkII, desktop tests), rollers_lean4.h (4-voice NEON renderer: microKORG 2)
 nts1mkii/     NTS-1 mkII unit: header.c (parameters), unit.cc (SDK callbacks), Makefile, config.mk
-microkorg2/   microKORG 2 unit: header.c, unit.cc (per-voice rendering, voice events, virtual patch), Makefile, config.mk
+microkorg2/   microKORG 2 unit: header.c, unit.cc (voice groups, voice events, virtual patch, optional load meter), Makefile, config.mk
+tools/mk2-meter/  RLmeter: the microKORG 2 unit built with the CPU load meter
 test/         render.cc, run.sh
 build.sh
 .github/workflows/build.yml   CI build + release

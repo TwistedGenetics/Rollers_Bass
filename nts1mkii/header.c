@@ -12,7 +12,7 @@ const __unit_header unit_header_t unit_header = {
     .api = UNIT_API_VERSION,
     .dev_id = 0x5477476EU,  // 'TwGn' (TwistedGenetics), same as VectorFM / Formant Mutator
     .unit_id = 0x3U,        // 1 = VectorFM, 2 = Formant Mutator, 3 = Rollers
-    .version = 0x00010000U,  // 1.0.0
+    .version = 0x00010100U,  // 1.1.0
     .name = "Rollers",
     .num_params = 10,
     .params = {

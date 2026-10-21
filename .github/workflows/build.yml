@@ -82,11 +82,14 @@ jobs:
           files: |
             dist/Rollers.nts1mkiiunit
             dist/Rollers.mk2unit
+            dist/RLmeter.mk2unit
           body: |
             Rollers — jungle / drum & bass bass oscillator (clean sub + Reese / Hoover, pitch drop, drive, sampler crunch) for the Korg NTS-1 digital kit mkII and microKORG 2.
 
             **NTS-1 mkII** — download `Rollers.nts1mkiiunit`, open KORG KONTROL Editor with the NTS-1 mkII connected, drag the file onto the **oscillator** list and press **SEND**.
 
             **microKORG 2** (firmware 2.0.0 or later) — download `Rollers.mk2unit` and load it as a user oscillator (see the README for the steps).
+
+            `RLmeter.mk2unit` is optional: the same oscillator with this unit's CPU load shown next to MODE (e.g. `S+RS 37%`). Load it alongside Rollers if you hear crackles and want to see how close to the limit it is.
 
             Controls and starter settings: see the [README](https://github.com/${{ github.repository }}#readme).

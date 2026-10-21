@@ -25,4 +25,7 @@ ULIBDIR =
 ULIBS  = -lm
 ULIBS += -lc
 
+# -O3 rather than the default -Os: the oscillator has a tight CPU budget
+OPTIM = -O3
+
 UDEFS =
