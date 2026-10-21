@@ -6,7 +6,7 @@ Rollers handles the bassline: a heavy, clean **sub** with a moving **Reese** (or
 
 ## Download & install
 
-Go to [**Releases**](https://github.com/TwistedGenetics/Rollers_Bass/releases/latest) and download the file for your synth. Until the first release is tagged, the latest build of both files is in the **Actions** tab: open the newest run and download the **Rollers-units** artifact.
+Go to [**Releases**](https://github.com/TwistedGenetics/Rollers_Bass/releases/latest) and download the file for your synth.
 
 ### NTS-1 mkII: `Rollers.nts1mkiiunit`
 
@@ -101,12 +101,7 @@ The NTS-1 unit is ~8.5 KB (limit 48 KB) and links no library code beyond what Ko
 
 GitHub Actions builds both units with Korg's own toolchains and runs the DSP tests on every push. Each run's files are under the **Actions** tab.
 
-Releases are made only when you push a version tag that matches `.version` in both `header.c` files (e.g. `0x00010000U` = 1.0.0):
-
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
+Releases are automatic: when `.version` in `nts1mkii/header.c` and `microkorg2/header.c` changes (e.g. `0x00010001U` = 1.0.1) and is pushed to main, Actions tags it and publishes a new Release with both unit files. Pushes that keep the same version refresh that Release's files.
 
 To build locally (no Docker needed):
 
@@ -132,7 +127,7 @@ nts1mkii/     NTS-1 mkII unit: header.c (parameters), unit.cc (SDK callbacks), M
 microkorg2/   microKORG 2 unit: header.c, unit.cc (per-voice rendering, voice events, virtual patch), Makefile, config.mk
 test/         render.cc, run.sh
 build.sh
-.github/workflows/build.yml   CI build + tagged release
+.github/workflows/build.yml   CI build + release
 ```
 
 ## Notes
